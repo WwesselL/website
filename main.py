@@ -103,7 +103,7 @@ body {
     font-size: 14px; 
     cursor: pointer; 
     transition: all 0.2s ease-in-out; 
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); 
     margin-right: 10px;
 }
 .nav-buttons button:hover, .file-label:hover { 
@@ -366,31 +366,32 @@ def generate_edit_script():
 
         function saveChanges() {
             const editableContent = document.querySelector('.editable-content');
+            const currentDate = new Date();
             const data = {
                 content: editableContent.innerHTML,
-                page: window.location.pathname
+                month: currentDate.getMonth() + 1,
+                year: currentDate.getFullYear()
             };
 
-            let saveUrl = '/save_logboek';
-            if (data.page === '/contact') {
-                saveUrl = '/save_contact';
-            } else if (data.page === '/verslag') {
-                saveUrl = '/save_verslag';
-            }
-
-            fetch(saveUrl, {
+            fetch('/save_logboek', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken() // Zorg ervoor dat deze functie is gedefinieerd
                 },
-                body: JSON.stringify(data),
+                body: JSON.stringify(data)
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Server responded with status: ' + response.status);
+                }
+                return response.json();
+            })
             .then(data => {
                 if (data.success) {
                     alert('Wijzigingen opgeslagen');
                 } else {
-                    alert('Er is een fout opgetreden bij het opslaan');
+                    alert('Er is een fout opgetreden bij het opslaan: ' + data.message);
                 }
             })
             .catch((error) => {
@@ -404,46 +405,22 @@ def generate_edit_script():
 @app.route('/save_logboek', methods=['POST'])
 @admin_required
 def save_logboek():
-    app.logger.info("save_logboek route called")
-    data = request.json
-    app.logger.info(f"Received data: {data}")
-    content = data.get('content')
-    month = data.get('month')
-    year = data.get('year')
-    
-    if not content or not month or not year:
-        app.logger.error("Invalid input received")
-        return jsonify({"success": False, "message": "Ongeldige invoer"}), 400
+    try:
+        data = request.json
+        if not data or 'content' not in data or 'month' not in data or 'year' not in data:
+            return jsonify({"success": False, "message": "Ongeldige invoer"}), 400
 
-    filename = f'logboek_{month}_{year}.txt'
-    app.logger.info(f"Attempting to write to file: {filename}")
-    write_content(filename, content)
-    app.logger.info("Content written successfully")
-    return jsonify({"success": True})
+        content = data['content']
+        month = data['month']
+        year = data['year']
 
-@app.route('/save_contact', methods=['POST'])
-@admin_required
-def save_contact():
-    data = request.json
-    content = data.get('content')
-    
-    if not content:
-        return jsonify({"success": False, "message": "Ongeldige invoer"}), 400
+        filename = f'logboek_{month}_{year}.txt'
+        write_content(filename, content)
 
-    write_content('contact.txt', content)
-    return jsonify({"success": True})
-
-@app.route('/save_verslag', methods=['POST'])
-@admin_required
-def save_verslag():
-    data = request.json
-    content = data.get('content')
-    
-    if not content:
-        return jsonify({"success": False, "message": "Ongeldige invoer"}), 400
-
-    write_content('verslag.txt', content)
-    return jsonify({"success": True})
+        return jsonify({"success": True, "message": "Logboek succesvol opgeslagen"})
+    except Exception as e:
+        app.logger.error(f"Error in save_logboek: {str(e)}")
+        return jsonify({"success": False, "message": f"Er is een fout opgetreden: {str(e)}"}), 500
 
 def generate_header(is_admin):
     admin_button = '<button onclick="window.location.href=\'/logout\'">Logout</button>' if is_admin else '<button onclick="window.location.href=\'/login\'">Admin Login</button>'
@@ -458,7 +435,6 @@ def generate_header(is_admin):
                 <button onclick="window.location.href='/bestanden'">Bestanden</button>
                 <button onclick="window.location.href='/contact'">Contact</button>
                 <button onclick="window.location.href='/logboek'">Logboek</button>
-                <button onclick="window.location.href='/verslag'">Verslag</button>
                 {admin_button}
                 <button id="darkModeToggle">🌓</button>
             </nav>
@@ -1796,120 +1772,6 @@ def update_folder_order():
             return jsonify({"success": False, "message": f"Fout bij het bijwerken van de mapvolgorde: {str(e)}"}), 500
     else:
         return jsonify({"success": False, "message": "Geen mapvolgorde ontvangen"}), 400
-
-# Zorg ervoor dat je de OpenAI API key correct instelt
-client = OpenAI(api_key=os.getenv("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"))
-
-def generate_summary_from_logbook():
-    try:
-        months = [
-            (9, 2024), (10, 2024), (11, 2024), (12, 2024), (1, 2025)
-        ]
-        
-        all_content = ""
-        for month, year in months:
-            content = read_content('', month=month, year=year)
-            if content:
-                all_content += f"{calendar.month_name[month]} {year}:\n{content}\n\n"
-        
-        app.logger.info("Logbook content collected")
-        
-        # Verwijder HTML tags en onnodige witruimte
-        clean_content = re.sub('<.*?>', '', all_content)
-        clean_content = re.sub('\s+', ' ', clean_content).strip()
-        
-        app.logger.info("Content cleaned")
-        
-        # Genereer een samenvatting met behulp van OpenAI
-        prompt = f"""
-        Hieronder staat een logboek van activiteiten over meerdere maanden. 
-        Maak hiervan een beknopt verslag van ongeveer 1 A4 (ongeveer 500 woorden) dat de belangrijkste punten samenvat.
-        Structureer het verslag als volgt:
-        1. Een korte inleiding die het doel en de periode van het logboek beschrijft.
-        2. Een overzicht van de belangrijkste activiteiten en ontwikkelingen per maand.
-        3. Een conclusie die de belangrijkste leerpunten en resultaten samenvat.
-
-        Logboek:
-        {clean_content}
-        """
-        
-        app.logger.info("Sending request to OpenAI")
-        
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Je bent een assistent die beknopte en heldere verslagen maakt op basis van logboekinformatie."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=800,  # Ongeveer 500 woorden
-            temperature=0.7
-        )
-        
-        app.logger.info("Received response from OpenAI")
-        
-        summary = response.choices[0].message.content.strip()
-        
-        return summary
-    except Exception as e:
-        app.logger.error(f"Error in generate_summary_from_logbook: {str(e)}")
-        raise
-
-@app.route('/generate_verslag')
-@admin_required
-def generate_verslag():
-    try:
-        app.logger.info("Starting to generate verslag")
-        summary = generate_summary_from_logbook()
-        app.logger.info("Summary generated successfully")
-        write_content('verslag.txt', summary)
-        app.logger.info("Summary written to file")
-        return redirect(url_for('verslag'))
-    except Exception as e:
-        app.logger.error(f"Error in generate_verslag: {str(e)}")
-        return jsonify({"success": False, "message": f"Er is een fout opgetreden: {str(e)}"}), 500
-
-# Voeg deze knop toe aan de verslag pagina
-def generate_summary_button(is_admin):
-    if is_admin:
-        return '<button onclick="window.location.href=\'/generate_verslag\'">Genereer AI Verslag</button>'
-    return ''
-
-# Update de verslag route
-@app.route('/verslag')
-def verslag():
-    try:
-        is_admin = 'is_admin' in session and session['is_admin']
-        header = generate_header(is_admin)
-        
-        content = read_content('verslag.txt')
-        if not content:
-            content = '<h1>Verslag</h1><p>Hier komt de inhoud van het verslag.</p>'
-
-        return f'''
-        <html>
-            <head>
-                <title>Verslag - Portfolio Wessel</title>
-                <style>{common_styles}</style>
-            </head>
-            <body>
-                {header}
-                <div class="container">
-                    <div class="content-container">
-                        {generate_summary_button(is_admin)}
-                        <div class="editable-content">
-                            {content}
-                        </div>
-                    </div>
-                </div>
-                {generate_edit_button(is_admin)}
-                {generate_edit_script()}
-                {generate_dark_mode_script()}
-            </body>
-        </html>
-        '''
-    except Exception as e:
-        logging.error(f"Error in verslag route: {str(e)}")
-        return jsonify({"success": False, "message": f"Er is een onverwachte fout opgetreden: {str(e)}"}), 500
 
 if __name__ == '__main__':
     logging.debug("Initializing file structure")
